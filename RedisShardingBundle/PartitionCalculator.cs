@@ -7,27 +7,27 @@ namespace RedisShardingBundle
 {
     internal class PartitionCalculator
     {
-        private bool cutOver = false;
+        private readonly bool CutOver = false;
 
-        private SHA256 sha256;
+        private readonly SHA256 Sha256;
 
-        private int OldClusterCount;
+        private readonly int OldClusterCount;
 
-        private int NewClusterCount;
+        private readonly int NewClusterCount;
 
-        private int MaxPossibleShards;
+        private readonly int MaxPossibleShards;
 
-        private PartitionCalculator instance;
         public PartitionCalculator(int oldClusterCount, int newClusterCount, int maxPossibleShards)
         {
             OldClusterCount = oldClusterCount;
             NewClusterCount = newClusterCount;
             MaxPossibleShards = maxPossibleShards;
+            Sha256 = SHA256.Create();
         }
 
         public int calculateReadPartition(string partitionKey)
         {
-            int hashOfKey = calculateHash(partitionKey);
+            int hashOfKey = CalculateHash(partitionKey);
 
             //application level shard.
             int shardId = hashOfKey % MaxPossibleShards;
@@ -37,39 +37,40 @@ namespace RedisShardingBundle
 
         public int[] calculateWritePartitions(string partitionKey)
         {
-            int hashOfKey = calculateHash(partitionKey);
+            int hashOfKey = CalculateHash(partitionKey);
             int shardId = hashOfKey % MaxPossibleShards;
 
-            return getWriteClusterIds(shardId);
+            return GetWriteClusterIds(shardId);
         }
 
         private int getClusterId(int shardId)
         {
-            int divisor = cutOver ? NewClusterCount : OldClusterCount;
-            return getClusterId(shardId, divisor);
+            int divisor = CutOver ? NewClusterCount : OldClusterCount;
+            return GetClusterId(shardId, divisor);
         }
 
-        private int getClusterId(int shardId, int clusterCount)
+        private int GetClusterId(int shardId, int clusterCount)
         {
             return shardId % (MaxPossibleShards / clusterCount);
         }
 
-        private int[] getWriteClusterIds(int shardId)
+        private int[] GetWriteClusterIds(int shardId)
         {
-            int[] clusterIds = cutOver ? new int[1] : new int[2];
-            clusterIds[0] = getClusterId(shardId, NewClusterCount);
-            if (!cutOver)
+            int[] clusterIds = CutOver ? new int[1] : new int[2];
+            clusterIds[0] = GetClusterId(shardId, NewClusterCount);
+            if (!CutOver)
             {
-                clusterIds[1] = getClusterId(shardId, OldClusterCount);
+                clusterIds[1] = GetClusterId(shardId, OldClusterCount);
             }
 
             return clusterIds;
         }
 
-        private int calculateHash(string partitionKey)
+        //using SHA256 to calculate the hash
+        private int CalculateHash(string partitionKey)
         {
             var keyAsByteArray = Encoding.UTF8.GetBytes(partitionKey);
-            var hashAsArray = sha256.ComputeHash(keyAsByteArray);
+            var hashAsArray = Sha256.ComputeHash(keyAsByteArray);
             return BitConverter.ToInt32(hashAsArray, 0);
         }
     }
