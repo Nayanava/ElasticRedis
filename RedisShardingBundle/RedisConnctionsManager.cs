@@ -17,6 +17,10 @@ namespace RedisShardingBundle
 
         public RedisConnectionConfig[] RedisConnectionConfigs { get; }
 
+        public int CutOverWindowInHours { get; set; }
+
+        private readonly PartitionCalculator partitionCalculator;
+
         public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, RedisConnectionConfig[] redisConnectionConfigs)
         {
             this.TotalShards = totalShards;
@@ -27,18 +31,25 @@ namespace RedisShardingBundle
                 throw new IndexOutOfRangeException("Cluster size and configurations don't match");
             }
             this.RedisConnectionConfigs = redisConnectionConfigs;
+            PartitionCalculator partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards);
         }
 
-        public RedisValue get(String partitionKey, String searchKey)
+        public RedisValue get(string partitionKey, string searchKey)
         {
-            int shardId = calculateShard(partitionKey);
-            IDatabase database = RedisConnectionConfigs[shardId].GetRedisDatabase();
+            int clusterId = partitionCalculator.calculateReadPartition(partitionKey);
+            IDatabase database = RedisConnectionConfigs[clusterId].GetRedisDatabase();
             return database.StringGet(searchKey);
         }
-
-        private int calculateShard(string partitionKey)
+        
+        public bool StringSet(string partitionKey, RedisKey itemKey, RedisValue redisValue, TimeSpan timeSpan)
         {
-            throw new NotImplementedException();
+            bool response = true;
+            int[] clusterIds = partitionCalculator.calculateWritePartitions(partitionKey);
+            foreach(int clusterId in clusterIds) {
+                IDatabase database = RedisConnectionConfigs[clusterId].GetRedisDatabase();
+                response = response && database.StringSet(itemKey, redisValue, timeSpan);
+            }
+            return response;
         }
     }
 }
