@@ -15,7 +15,7 @@ namespace Firehose.Cache.Distributed.Redis
     /// <summary>
     /// Class for onnection pool of the Azure Redis Connections from this client
     /// </summary>
-    public sealed class RedisConnectionManager
+    public sealed class RedisConnectionConfig
     {
         /// <summary>
         /// Client id prefix for the connection
@@ -37,7 +37,7 @@ namespace Firehose.Cache.Distributed.Redis
         /// </summary>
         /// <param name="connectionString">Redis connection string</param>
         /// <param name="poolSize">Number of pooled Redis connection multiplexers</param>
-        public RedisConnectionManager(string connectionString, int poolSize)
+        public RedisConnectionConfig(string connectionString, int poolSize)
         {
             this.cacheStoreCount = 0;
             this.lazyConnections = new Lazy<ConnectionMultiplexer>[poolSize];
