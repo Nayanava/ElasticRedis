@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -32,9 +33,13 @@ namespace RedisShardingBundle
             Token = cancellationToken; 
             Sha256 = SHA256.Create();
             CutOverTimestampInHours = cutOverTimestampInHours;
-            CutOver = DataMigrationSetUpPrerequisitesAsync(database).Result;
+            DataMigrationSetUpPrerequisitesAsync(database).Await(Completed, HandleException);
+            RefreshCutOverFlag(database).Await(HandleException);
+        }
 
-
+        private void Completed(bool res)
+        {
+            CutOver = res;
         }
 
         private async Task<bool> DataMigrationSetUpPrerequisitesAsync(IDatabase database)
@@ -49,7 +54,8 @@ namespace RedisShardingBundle
                 }
                 // else cluster migration has already been triggered and these are follow-up instances coming up
                 //these dont need to update anything on the cache.
-                return false;
+                //check if cutOver is done.
+                return await UpdateOnCutOverComplete(database, dataMigrationMeta);
             }
             if(null == dataMigrationMeta)
             {
@@ -57,6 +63,7 @@ namespace RedisShardingBundle
                 //always store data in the oldest cluster.
                 await AddOrUpdateDataMigrationMeta(database, true);
             }
+            
             return true;
         }
 
@@ -66,7 +73,7 @@ namespace RedisShardingBundle
             return convertEntriesToMeta(hashEntries);
         }
 
-        public int calculateReadPartition(string partitionKey)
+        public int CalculateReadPartition(string partitionKey)
         {
             int hashOfKey = CalculateHash(partitionKey);
 
@@ -76,7 +83,7 @@ namespace RedisShardingBundle
             return getClusterId(partitionId);
         }
 
-        public int[] calculateWritePartitions(string partitionKey)
+        public int[] CalculateWritePartitions(string partitionKey)
         {
             int hashOfKey = CalculateHash(partitionKey);
             int partitionId = hashOfKey % MaxPossibleShards;
@@ -87,6 +94,8 @@ namespace RedisShardingBundle
         private int getClusterId(int partitionId)
         {
             int divisor = CutOver ? NewClusterCount : OldClusterCount;
+            string logLine = CutOver ? "Migration Complete, Reads enabled on new Cluster" : "Migration In Progress, Reads Enabled on old Cluster";
+            Console.WriteLine(logLine);
             return GetClusterId(partitionId, divisor);
         }
 
@@ -103,7 +112,10 @@ namespace RedisShardingBundle
             {
                 clusterIds[1] = GetClusterId(partitionId, OldClusterCount);
             }
+            string logLine = !CutOver ? $"Data Migration In progress, Writes enabled on old cluster : {clusterIds[1]}, new cluster : {clusterIds[0]}"
+                : $"Data Migration Complete, Writes enabled only on new Cluster : {clusterIds[0]}";
 
+            Console.WriteLine(logLine);
             return clusterIds;
         }
 
@@ -129,19 +141,19 @@ namespace RedisShardingBundle
             }
             DataMigrationMeta dataMigrationMeta = new DataMigrationMeta()
             {
-                OldClusterCount = (int)GetDataFromDictionary(dictionary, "OldClusterCount"),
-                NewClusterCount = (int)GetDataFromDictionary(dictionary, "NewClusterCount"),
-                CutOver = (bool)GetDataFromDictionary(dictionary, "CutOver"),
-                CutOverTimestampInMillis = (long)GetDataFromDictionary(dictionary, "CutOverTimestampInMillis")
+                OldClusterCount = int.Parse(GetDataFromDictionary(dictionary, "OldClusterCount")),
+                NewClusterCount = int.Parse(GetDataFromDictionary(dictionary, "NewClusterCount")),
+                CutOver = (int.Parse(GetDataFromDictionary(dictionary, "CutOver")) == 1) ? true : false,
+                CutOverTimestampInMillis = long.Parse(GetDataFromDictionary(dictionary, "CutOverTimestampInMillis"))
             };
             return dataMigrationMeta;
         }
 
-        private object GetDataFromDictionary(IDictionary<string, object> dictionary, string key)
+        private string GetDataFromDictionary(IDictionary<string, object> dictionary, string key)
         {
-            if (dictionary.TryGetValue("oldClusterCount", out object value))
+            if (dictionary.TryGetValue(key, out object value))
             {
-                return value;
+                return value.ToString();
             }
             return null;
         }
@@ -159,9 +171,20 @@ namespace RedisShardingBundle
             await database.HashSetAsync("DataMigrationMeta", hashEntries.ToArray());
         }
 
+        private async Task AddOrUpdateDataMigrationMeta(IDatabase database, DataMigrationMeta dataMigrationMeta)
+        {
+            IList<HashEntry> hashEntries = new List<HashEntry>();
+            hashEntries.Add(new HashEntry("OldClusterCount", dataMigrationMeta.NewClusterCount));
+            hashEntries.Add(new HashEntry("NewClusterCount", dataMigrationMeta.NewClusterCount));
+            hashEntries.Add(new HashEntry("CutOver", dataMigrationMeta.CutOver));
+            hashEntries.Add(new HashEntry("CutOverTimestampInMillis", dataMigrationMeta.CutOverTimestampInMillis));
+
+            await database.HashSetAsync("DataMigrationMeta", hashEntries.ToArray());
+        }
+
         private long CalculateCutOverTimestamp(long cutOverTimestampInHours)
         {
-            return CurrentTimeInMilliSeconds() + cutOverTimestampInHours * (60 * 60 * 1000);
+            return CurrentTimeInMilliSeconds() + (cutOverTimestampInHours * (60 * 60 * 1000));
         }
 
         private long CurrentTimeInMilliSeconds()
@@ -170,6 +193,17 @@ namespace RedisShardingBundle
             return (long)t.TotalMilliseconds;
         }
 
+        private async Task<bool> UpdateOnCutOverComplete(IDatabase database, DataMigrationMeta dataMigrationMeta)
+        {
+            if (!CutOver && CurrentTimeInMilliSeconds() > dataMigrationMeta.CutOverTimestampInMillis)
+            {
+                dataMigrationMeta.CutOver = CutOver = true;
+                dataMigrationMeta.CutOverTimestampInMillis = -1;
+
+                await AddOrUpdateDataMigrationMeta(database, dataMigrationMeta);
+            }
+            return CutOver;
+        }
         private async Task RefreshCutOverFlag(IDatabase database)
         {
             while(!Token.IsCancellationRequested)
@@ -180,9 +214,42 @@ namespace RedisShardingBundle
                     CutOver = dataMigrationMeta.CutOver;
                 }
 
+                //if the flag is turned off, but the CutOver time has crossed, update the settings
+                await UpdateOnCutOverComplete(database, dataMigrationMeta);
                 long delayPeriod = CutOver ? -1 : dataMigrationMeta.CutOverTimestampInMillis - CurrentTimeInMilliSeconds();
 
                 await Task.Delay(TimeSpan.FromMilliseconds(delayPeriod), Token);
+            }
+        }
+
+        private void HandleException( Exception ex)
+        {
+            throw ex;
+        }
+    }
+    public static class AwaitOnTask
+    {
+        public static async void Await<T>(this Task<T> task, Action<T> completed, Action<Exception> errorCallBack)
+        {
+            try
+            {
+               T result = await task;
+                completed?.Invoke(result);
+            }
+            catch (Exception ex)
+            {
+                errorCallBack?.Invoke(ex);
+            }
+        }
+
+        public static async void Await(this Task task, Action<Exception> errorCallBack)
+        {
+            try
+            {
+                await task;
+            } catch(Exception ex)
+            {
+                errorCallBack?.Invoke(ex);
             }
         }
     }

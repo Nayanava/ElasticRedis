@@ -3,6 +3,7 @@
     using Firehose.Cache.Distributed.Redis;
     using StackExchange.Redis;
     using System;
+    using System.Threading;
 
     public sealed class RedisConnectionsManager
     {
@@ -18,30 +19,31 @@
 
         private readonly PartitionCalculator partitionCalculator;
 
-        public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, RedisConnectionConfig[] redisConnectionConfigs)
+        public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, int cutOverTimeStampInHours, RedisConnectionConfig[] redisConnectionConfigs, CancellationToken cancellationToken)
         {
             this.FixedApplicationShards = totalShards;
             this.OldClustersCount = oldClustersCount;
             this.NewClustersCount = newClustersCount;
+            this.CutOverTimeStampInHours = cutOverTimeStampInHours;
             if (newClustersCount != redisConnectionConfigs.Length)
             {
                 throw new IndexOutOfRangeException("Cluster size and configurations don't match");
             }
             this.RedisConnectionConfigs = redisConnectionConfigs;
-            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards, CutOverTimeStampInHours, GetDatabase(0));
+            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards, CutOverTimeStampInHours, GetDatabase(0), cancellationToken);
         }
 
         public RedisValue StringGet(string partitionKey, string redisKey)
         {
-            int clusterId = partitionCalculator.calculateReadPartition(partitionKey);
+            int clusterId = partitionCalculator.CalculateReadPartition(partitionKey);
             IDatabase database = GetDatabase(clusterId);
             return database.StringGet(redisKey);
         }
         
-        public bool StringSet(string partitionKey, RedisKey redisKey, RedisValue redisValue, TimeSpan timeSpan)
+        public bool StringSet(string partitionKey, RedisKey redisKey, RedisValue redisValue, TimeSpan ? timeSpan = null)
         {
             bool response = true;
-            int[] clusterIds = partitionCalculator.calculateWritePartitions(partitionKey);
+            int[] clusterIds = partitionCalculator.CalculateWritePartitions(partitionKey);
             foreach(int clusterId in clusterIds) 
             {
                 IDatabase database = GetDatabase(clusterId);
@@ -53,7 +55,7 @@
         public bool KeyExpire(string partitionKey, RedisKey redisKey, TimeSpan timeSpan, CommandFlags flags = CommandFlags.None)
         {
             bool response = true;
-            int[] clusterIds = partitionCalculator.calculateWritePartitions(partitionKey);
+            int[] clusterIds = partitionCalculator.CalculateWritePartitions(partitionKey);
             foreach(int clusterId in clusterIds)
             {
                 IDatabase database = GetDatabase(clusterId);
@@ -65,7 +67,7 @@
         public bool KeyDelete(string partitionKey, RedisKey redisKey, CommandFlags flags = CommandFlags.None)
         {
             bool response = true;
-            int[] clusterIds = partitionCalculator.calculateWritePartitions(partitionKey);
+            int[] clusterIds = partitionCalculator.CalculateWritePartitions(partitionKey);
             foreach (int clusterId in clusterIds)
             {
                 IDatabase database = GetDatabase(clusterId);
@@ -76,14 +78,14 @@
 
         public RedisValue[] HashGet(string partitionKey, RedisKey redisKey, RedisValue[] redisValues, CommandFlags flags = CommandFlags.None)
         {
-            int clusterId = partitionCalculator.calculateReadPartition(partitionKey);
+            int clusterId = partitionCalculator.CalculateReadPartition(partitionKey);
             IDatabase database = GetDatabase(clusterId);
             return database.HashGet(redisKey, redisValues, flags);
         }
 
         public bool HashSet(string partitionKey, RedisKey redisKey, HashEntry[] hashFields, CommandFlags flags = CommandFlags.None)
         {
-            int[] clusterIds = partitionCalculator.calculateWritePartitions(partitionKey);
+            int[] clusterIds = partitionCalculator.CalculateWritePartitions(partitionKey);
             foreach (int clusterId in clusterIds)
             {
                 IDatabase database = GetDatabase(clusterId);
