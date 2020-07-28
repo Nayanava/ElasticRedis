@@ -148,7 +148,7 @@ namespace RedisShardingBundle
             hashEntries.Add(new HashEntry("CutOver", cutOver));
             //if cutOver has happened or cutOver is not required, reset the cutovertimestamp to -1
             //if cluster migration is triggered for the time, we set the CutOverTimeStamp
-            hashEntries.Add(new HashEntry("CutOverTimestampInHours", cutOver ? -1 : CalculateCutOverTimestamp(CutOverTimestampInHours)));
+            hashEntries.Add(new HashEntry("CutOverTimestampInMillis", cutOver ? -1 : CalculateCutOverTimestamp(CutOverTimestampInHours)));
 
             await database.HashSetAsync("DataMigrationMeta", hashEntries.ToArray());
         }
