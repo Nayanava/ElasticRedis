@@ -4,12 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 namespace RedisShardingBundle
 {
     internal class PartitionCalculator
     {
-        private readonly bool CutOver;
+        private bool CutOver;
 
         private readonly SHA256 Sha256;
 
@@ -21,14 +22,19 @@ namespace RedisShardingBundle
 
         private readonly long CutOverTimestampInHours;
 
-        public PartitionCalculator(int oldClusterCount, int newClusterCount, int maxPossibleShards, long cutOverTimestampInHours, IDatabase database)
+        private readonly CancellationToken Token;
+
+        public PartitionCalculator(int oldClusterCount, int newClusterCount, int maxPossibleShards, long cutOverTimestampInHours, IDatabase database, CancellationToken cancellationToken)
         {
             OldClusterCount = oldClusterCount;
             NewClusterCount = newClusterCount;
             MaxPossibleShards = maxPossibleShards;
+            Token = cancellationToken; 
             Sha256 = SHA256.Create();
             CutOverTimestampInHours = cutOverTimestampInHours;
             CutOver = DataMigrationSetUpPrerequisitesAsync(database).Result;
+
+
         }
 
         private async Task<bool> DataMigrationSetUpPrerequisitesAsync(IDatabase database)
@@ -155,8 +161,29 @@ namespace RedisShardingBundle
 
         private long CalculateCutOverTimestamp(long cutOverTimestampInHours)
         {
+            return CurrentTimeInMilliSeconds() + cutOverTimestampInHours * (60 * 60 * 1000);
+        }
+
+        private long CurrentTimeInMilliSeconds()
+        {
             TimeSpan t = DateTime.Now - new DateTime(1970, 1, 1);
-            return (long)t.TotalMilliseconds + cutOverTimestampInHours * (60 * 60 * 1000);
+            return (long)t.TotalMilliseconds;
+        }
+
+        private async Task RefreshCutOverFlag(IDatabase database)
+        {
+            while(!Token.IsCancellationRequested)
+            {
+                DataMigrationMeta dataMigrationMeta = await FetchDataMigrationStatusFromRedis(database);
+                if(null != dataMigrationMeta)
+                {
+                    CutOver = dataMigrationMeta.CutOver;
+                }
+
+                long delayPeriod = CutOver ? -1 : dataMigrationMeta.CutOverTimestampInMillis - CurrentTimeInMilliSeconds();
+
+                await Task.Delay(TimeSpan.FromMilliseconds(delayPeriod), Token);
+            }
         }
     }
 }
