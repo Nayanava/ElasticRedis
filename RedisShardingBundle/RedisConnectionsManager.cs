@@ -6,7 +6,7 @@
 
     public sealed class RedisConnectionsManager
     {
-        public int TotalShards { get; }
+        public int FixedApplicationShards { get; }
 
         public int OldClustersCount { get; }
 
@@ -14,13 +14,13 @@
 
         public RedisConnectionConfig[] RedisConnectionConfigs { get; }
 
-        public int CutOverWindowInHours { get; set; }
+        public int CutOverTimeStampInHours { get; set; }
 
         private readonly PartitionCalculator partitionCalculator;
 
         public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, RedisConnectionConfig[] redisConnectionConfigs)
         {
-            this.TotalShards = totalShards;
+            this.FixedApplicationShards = totalShards;
             this.OldClustersCount = oldClustersCount;
             this.NewClustersCount = newClustersCount;
             if (newClustersCount != redisConnectionConfigs.Length)
@@ -28,7 +28,7 @@
                 throw new IndexOutOfRangeException("Cluster size and configurations don't match");
             }
             this.RedisConnectionConfigs = redisConnectionConfigs;
-            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards);
+            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards, CutOverTimeStampInHours, GetDatabase(0));
         }
 
         public RedisValue StringGet(string partitionKey, string redisKey)
