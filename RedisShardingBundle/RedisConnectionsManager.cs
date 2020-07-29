@@ -15,22 +15,22 @@
 
         public RedisConnectionConfig[] RedisConnectionConfigs { get; }
 
-        public int CutOverTimeStampInHours { get; set; }
+        public int CutOverWindowInMinutes { get; set; }
 
         private readonly PartitionCalculator partitionCalculator;
 
-        public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, int cutOverTimeStampInHours, RedisConnectionConfig[] redisConnectionConfigs, CancellationToken cancellationToken)
+        public RedisConnectionsManager(int totalShards, int oldClustersCount, int newClustersCount, int cutOverWindowInMinutes, RedisConnectionConfig[] redisConnectionConfigs, CancellationToken cancellationToken)
         {
             this.FixedApplicationShards = totalShards;
             this.OldClustersCount = oldClustersCount;
             this.NewClustersCount = newClustersCount;
-            this.CutOverTimeStampInHours = cutOverTimeStampInHours;
-            if (newClustersCount != redisConnectionConfigs.Length)
+            this.CutOverWindowInMinutes = cutOverWindowInMinutes;
+            if (newClustersCount > redisConnectionConfigs.Length)
             {
                 throw new IndexOutOfRangeException("Cluster size and configurations don't match");
             }
             this.RedisConnectionConfigs = redisConnectionConfigs;
-            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards, CutOverTimeStampInHours, GetDatabase(0), cancellationToken);
+            partitionCalculator = new PartitionCalculator(oldClustersCount, newClustersCount, totalShards, CutOverWindowInMinutes, GetDatabase(0), cancellationToken);
         }
 
         public RedisValue StringGet(string partitionKey, string redisKey)
