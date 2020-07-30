@@ -50,6 +50,7 @@ namespace Firehose.Cache.Distributed.Redis
                     var config = this.GetConfigurationOptions(connectionString, i);
                     this.lazyConnections[i] = new Lazy<ConnectionMultiplexer>(() =>
                     {
+                        ConnectionMultiplexer.SetFeatureFlag("preventthreadtheft", true);
                         var redisConnectionMultiplexer = ConnectionMultiplexer.Connect(config);
                         redisConnectionMultiplexer.PreserveAsyncOrder = false;
                         return redisConnectionMultiplexer;
